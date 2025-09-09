@@ -7,41 +7,51 @@ from pydantic import BaseModel
 
 app = FastAPI()
 
+
+# Load environment variables
+from dotenv import load_dotenv
+load_dotenv()
+
 # Base URL for your deployed RAGFlow instance
-RAGFLOW_BASE_URL = os.getenv("RAGFLOW_BASE_URL", "http://148.113.1.127/")
+RAGFLOW_BASE_URL = os.getenv("RAGFLOW_BASE_URL")
+RAGFLOW_DATASET_ID = os.getenv("RAGFLOW_DATASET_ID")
+RAGFLOW_API_KEY = os.getenv("RAGFLOW_API_KEY")
 
 class DocumentInput(BaseModel):
     document_id: str
     source: str  # "postgres" or "minio"
 
+
 # PostgreSQL configuration
 PG_CONFIG = {
-    'host': 'localhost',
-    'port': 5432,
-    'user': 'postgres',
-    'password': 'postgres',
-    'dbname': 'clm_dev',
+    'host': os.getenv('PG_HOST', 'localhost'),
+    'port': int(os.getenv('PG_PORT', 5432)),
+    'user': os.getenv('PG_USER', 'postgres'),
+    'password': os.getenv('PG_PASSWORD', 'postgres'),
+    'dbname': os.getenv('PG_DBNAME', 'clm_dev'),
 }
+
 
 
 # MinIO / S3 configuration
 MINIO_CONFIG = {
-    'endpoint_url': os.getenv("MINIO_ENDPOINT", "http://localhost:9000"),
-    'aws_access_key_id': os.getenv("MINIO_ACCESS_KEY", "minioadmin"),
-    'aws_secret_access_key': os.getenv("MINIO_SECRET_KEY", "minioadmin"),
-    'bucket_name': os.getenv("MINIO_BUCKET", "your-bucket"),
+    'endpoint_url': os.getenv("MINIO_ENDPOINT"),
+    'aws_access_key_id': os.getenv("MINIO_ACCESS_KEY"),
+    'aws_secret_access_key': os.getenv("MINIO_SECRET_KEY"),
+    'bucket_name': os.getenv("MINIO_BUCKET"),
 }
 
-def fetch_document(document_id: str, source: str) -> str:
+def fetch_document(document_id: str, source: str):
     if source == "postgres":
         conn = psycopg2.connect(**PG_CONFIG)
         try:
             with conn.cursor() as cur:
-                cur.execute("SELECT content FROM documents WHERE id = %s", (document_id,))
+                cur.execute('SELECT "documentContent", "documentName" FROM "ContractVersion" WHERE "contractId" = %s', (document_id,))
                 result = cur.fetchone()
                 if not result:
                     raise HTTPException(status_code=404, detail="Document not found in PostgreSQL")
-                return result[0]
+                document_content, document_name = result
+                return document_content, document_name
         finally:
             conn.close()
     elif source == "minio":
@@ -57,23 +67,28 @@ def fetch_document(document_id: str, source: str) -> str:
     else:
         raise HTTPException(status_code=400, detail="Invalid source specified (must be 'postgres' or 'minio')")
 
-def upload_to_ragflow(document_text: str, document_id: str):
-    files = {'file': (f"{document_id}.txt", document_text)}
-    endpoint = f"{RAGFLOW_BASE_URL}/documents"  # Adjust path if different
-    resp = requests.post(endpoint, files=files)
+def upload_to_ragflow(document_text: str, document_name: str):
+    files = {'file': (document_name, document_text)}
+    endpoint = f"{RAGFLOW_BASE_URL}/api/v1/datasets/{RAGFLOW_DATASET_ID}/documents"
+    headers = {
+        "Authorization": f"Bearer {RAGFLOW_API_KEY}"
+    }
+    resp = requests.post(endpoint, files=files, headers=headers)
     if not resp.ok:
         raise HTTPException(status_code=502, detail=f"Upload failed: {resp.text}")
     return resp.json()
 
 def trigger_chunk_and_ingest(doc_id: str):
-    # Example endpoints — adjust based on your actual RAGFlow API paths
-    chunk_resp = requests.post(f"{RAGFLOW_BASE_URL}/chunk", json={"document_id": doc_id})
+    # Use the correct RAGFlow parse documents endpoint
+    chunk_endpoint = f"{RAGFLOW_BASE_URL}/api/v1/datasets/{RAGFLOW_DATASET_ID}/chunks"
+    headers = {
+        "Authorization": f"Bearer {RAGFLOW_API_KEY}",
+        "Content-Type": "application/json"
+    }
+    payload = {"document_ids": [doc_id]}
+    chunk_resp = requests.post(chunk_endpoint, json=payload, headers=headers)
     if not chunk_resp.ok:
         raise HTTPException(status_code=502, detail=f"Chunking failed: {chunk_resp.text}")
-
-    ingest_resp = requests.post(f"{RAGFLOW_BASE_URL}/ingest", json={"document_id": doc_id})
-    if not ingest_resp.ok:
-        raise HTTPException(status_code=502, detail=f"Ingestion failed: {ingest_resp.text}")
 
 @app.post("/process/")
 def process_document(input: DocumentInput):
@@ -83,9 +98,18 @@ def process_document(input: DocumentInput):
     - Upload to RAGFlow
     - Trigger chunking & ingestion
     """
-    doc_text = fetch_document(input.document_id, input.source)
-    upload_result = upload_to_ragflow(doc_text, input.document_id)
-    # Assuming RAGFlow returns a JSON with your doc ID
-    ragflow_doc_id = upload_result.get("document_id") or input.document_id
+    import logging
+    logging.basicConfig(level=logging.INFO)
+
+    doc_content, doc_name = fetch_document(input.document_id, input.source)
+    logging.info(f"Fetched document: {doc_name} for contractId: {input.document_id}")
+    upload_result = upload_to_ragflow(doc_content, doc_name)
+    logging.info(f"Upload response: {upload_result}")
+
+    # Try to get the document ID from the upload response
+    # Extract document ID from upload response (first item in data array)
+    ragflow_doc_id = upload_result["data"][0]["id"]
+    logging.info(f"Document ID used for parsing: {ragflow_doc_id}")
+
     trigger_chunk_and_ingest(ragflow_doc_id)
     return {"status": "success", "document_id": ragflow_doc_id}
