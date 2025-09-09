@@ -111,5 +111,20 @@ def process_document(input: DocumentInput):
     ragflow_doc_id = upload_result["data"][0]["id"]
     logging.info(f"Document ID used for parsing: {ragflow_doc_id}")
 
+    # Set chunking method before parsing
+    chunk_method = os.getenv("RAGFLOW_CHUNK_METHOD", "naive")  # Change default as needed
+    parser_config = {"chunk_token_count": 128}  # Example config, adjust as needed
+    update_endpoint = f"{RAGFLOW_BASE_URL}/api/v1/datasets/{RAGFLOW_DATASET_ID}/documents/{ragflow_doc_id}"
+    update_payload = {
+        "chunk_method": chunk_method,
+        "parser_config": parser_config
+    }
+    update_headers = {
+        "Authorization": f"Bearer {RAGFLOW_API_KEY}",
+        "Content-Type": "application/json"
+    }
+    update_resp = requests.put(update_endpoint, json=update_payload, headers=update_headers)
+    logging.info(f"Chunk method update response: {update_resp.text}")
+
     trigger_chunk_and_ingest(ragflow_doc_id)
     return {"status": "success", "document_id": ragflow_doc_id}
