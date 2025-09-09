@@ -4,7 +4,8 @@ import boto3
 import psycopg2
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
-from pydantic import BaseModels
+from pydantic import BaseModel
+from dotenv import load_dotenv
 import logging
 logging.basicConfig(level=logging.INFO)
 
@@ -12,7 +13,6 @@ logging.basicConfig(level=logging.INFO)
 app = FastAPI()
 
 # Load environment variables
-from dotenv import load_dotenv
 load_dotenv()
 
 # Base URL for your deployed RAGFlow instance
@@ -20,7 +20,7 @@ RAGFLOW_BASE_URL = os.getenv("RAGFLOW_BASE_URL")
 RAGFLOW_DATASET_ID = os.getenv("RAGFLOW_DATASET_ID")
 RAGFLOW_API_KEY = os.getenv("RAGFLOW_API_KEY")
 
-class DocumentInput(BaseModels):
+class DocumentInput(BaseModel):
     document_id: str
     source: str  # "postgres" or "minio"
 
