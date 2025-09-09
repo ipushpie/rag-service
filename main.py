@@ -27,11 +27,11 @@ class DocumentInput(BaseModel):
 
 # PostgreSQL configuration
 PG_CONFIG = {
-    'host': os.getenv('PG_HOST', 'localhost'),
-    'port': int(os.getenv('PG_PORT', 5432)),
-    'user': os.getenv('PG_USER', 'postgres'),
-    'password': os.getenv('PG_PASSWORD', 'postgres'),
-    'dbname': os.getenv('PG_DBNAME', 'clm_dev'),
+    'host': os.getenv('POSTGRES_HOST'),
+    'port': int(os.getenv('POSTGRES_PORT', 5432)),
+    'user': os.getenv('POSTGRES_USER'),
+    'password': os.getenv('POSTGRES_PASSWORD'),
+    'dbname': os.getenv('POSTGRES_DB'),
 }
 
 
@@ -46,16 +46,17 @@ MINIO_CONFIG = {
 
 def fetch_document(document_id: str, source: str):
     if source == "postgres":
-        conn = psycopg2.connect(**PG_CONFIG)
         try:
-            with conn.cursor() as cur:
-                cur.execute('SELECT "documentContent", "documentName" FROM "ContractVersion" WHERE "contractId" = %s', (document_id,))
-                result = cur.fetchone()
-                if not result:
-                    raise HTTPException(status_code=404, detail="Document not found in PostgreSQL")
-                document_content, document_name = result
-                return document_content, document_name
+            conn = psycopg2.connect(**PG_CONFIG)
+            cursor = conn.cursor()
+            cursor.execute('SELECT "documentContent", "documentName" FROM "ContractVersion" WHERE "contractId" = %s', (document_id,))
+            result = cursor.fetchone()
+            if not result:
+                raise HTTPException(status_code=404, detail="Document not found in PostgreSQL")
+            document_content, document_name = result
+            return document_content, document_name
         finally:
+            cursor.close()
             conn.close()
     elif source == "minio":
         s3 = boto3.client('s3',
