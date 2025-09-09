@@ -2,11 +2,14 @@ import os
 import requests
 import boto3
 import psycopg2
-from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import JSONResponse
+from pydantic import BaseModels
+import logging
+logging.basicConfig(level=logging.INFO)
+
 
 app = FastAPI()
-
 
 # Load environment variables
 from dotenv import load_dotenv
@@ -17,7 +20,7 @@ RAGFLOW_BASE_URL = os.getenv("RAGFLOW_BASE_URL")
 RAGFLOW_DATASET_ID = os.getenv("RAGFLOW_DATASET_ID")
 RAGFLOW_API_KEY = os.getenv("RAGFLOW_API_KEY")
 
-class DocumentInput(BaseModel):
+class DocumentInput(BaseModels):
     document_id: str
     source: str  # "postgres" or "minio"
 
@@ -98,8 +101,7 @@ def process_document(input: DocumentInput):
     - Upload to RAGFlow
     - Trigger chunking & ingestion
     """
-    import logging
-    logging.basicConfig(level=logging.INFO)
+
 
     doc_content, doc_name = fetch_document(input.document_id, input.source)
     logging.info(f"Fetched document: {doc_name} for contractId: {input.document_id}")
@@ -128,3 +130,64 @@ def process_document(input: DocumentInput):
 
     trigger_chunk_and_ingest(ragflow_doc_id)
     return {"status": "success", "document_id": ragflow_doc_id}
+
+
+
+@app.post("/create_chat_assistant/")
+async def api_create_chat_assistant(request: Request):
+    body = await request.json()
+    name = body.get("name")
+    dataset_ids = body.get("dataset_ids")
+    avatar = body.get("avatar", "")
+    llm = body.get("llm")
+    prompt = body.get("prompt")
+    result = create_chat_assistant(
+        name=name,
+        dataset_ids=dataset_ids,
+        avatar=avatar,
+        llm=llm,
+        prompt=prompt
+    )
+    return JSONResponse(content=result)
+
+
+def create_chat_assistant(
+    name,
+    dataset_ids,
+    avatar="",
+    llm=None,
+    prompt=None
+):
+    """
+    Create a chat assistant in RAGFlow.
+    Args:
+        name (str): Name of the chat assistant.
+        dataset_ids (list): List of dataset IDs.
+        avatar (str): Base64 avatar string (optional).
+        llm (dict): LLM config (optional).
+        prompt (dict): Prompt config (optional).
+    Returns:
+        dict: Response from RAGFlow API.
+    """
+    RAGFLOW_BASE_URL = os.getenv("RAGFLOW_BASE_URL")
+    RAGFLOW_API_KEY = os.getenv("RAGFLOW_API_KEY")
+    url = f"{RAGFLOW_BASE_URL}/api/v1/chats"
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {RAGFLOW_API_KEY}"
+    }
+    payload = {
+        "name": name,
+        "avatar": avatar,
+        "dataset_ids": dataset_ids
+    }
+    if llm:
+        payload["llm"] = llm
+    if prompt:
+        payload["prompt"] = prompt
+    response = requests.post(url, headers=headers, json=payload)
+    try:
+        return response.json()
+    except Exception:
+        return {"error": response.text}
+
